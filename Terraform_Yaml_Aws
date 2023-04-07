@@ -1,0 +1,120 @@
+#This is a terraform yaml file that i have working for my aws environment.
+
+name: Terraform Apply
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+
+  push:
+    branches:
+      - dev
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: us-east-2
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: ${{ env.terraform_version }}
+
+      - name: Configure AWS Provider
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: us-east-2
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Create Terraform Plan
+        run: echo "::set-output name=tfplan::$(cat tfplan)"
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v2
+        with:
+          name: tfplan
+          path: tfplan
+
+  terraform-plan:
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Configure AWS Provider
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: us-east-2
+
+      - name: Download Terraform State
+        uses: actions/download-artifact@v2
+        with:
+          name: tfstate
+          path: .
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Create Terraform Plan
+        run: echo "::set-output name=tfplan::$(cat tfplan)"
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v2
+        with:
+          name: tfplan
+          path: tfplan
+
+  terraform-apply:
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Configure AWS Provider
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: us-east-2
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v2
+        with:
+          name: tfplan
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/dev' && github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+        run: terraform apply -
+
+      - name: Commit and Push Changes
+        if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "GitHub Actions"
+          git checkout dev
+          git add .
+          git commit -m "Update from Terraform Apply workflow"
+          git push
+          git checkout main
+          git merge dev
+          git push
